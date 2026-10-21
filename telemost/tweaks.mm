@@ -1,0 +1,226 @@
+// TelemostTweaks.dylib — loaded into Yandex.Telemost via an added LC_LOAD_DYLIB.
+//  * injects tweaks.js into every QWebEnginePage (no link previews, layout CSS)
+//  * moves the macOS traffic lights into the window content (transparent, full-size titlebar)
+// Log: ~/Library/Logs/TelemostTweaks.log
+
+#import <Cocoa/Cocoa.h>
+#import <objc/runtime.h>
+#include <QtCore/QString>
+#include <QtWebEngineCore/QWebEnginePage>
+#include <QtWebEngineCore/QWebEngineScript>
+#include <QtWebEngineCore/QWebEngineScriptCollection>
+#include <cstdio>
+#include <string>
+
+#include "tweaks_js.h" // generated: tweaks_js[], tweaks_js_len
+
+// ---- layout constants (top-left origin, points); keep in sync with tweaks.js CSS var ----
+static const CGFloat kLightsX = 16;       // left edge of the close button
+static const CGFloat kLightsCenterY = 34; // vertical centre of the sidebar header row
+static const CGFloat kLightsGap = 12;     // gap between zoom button and avatar
+static const CGFloat kDragZoneHeight = 56;
+
+static void tt_log(NSString *fmt, ...) {
+	static FILE *f = fopen([[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Logs/TelemostTweaks.log"] fileSystemRepresentation], "a");
+	if (!f) return;
+	va_list ap;
+	va_start(ap, fmt);
+	NSString *s = [[NSString alloc] initWithFormat:fmt arguments:ap];
+	va_end(ap);
+	fprintf(f, "%s %s\n", [[[NSDate date] description] UTF8String], [s UTF8String]);
+	fflush(f);
+}
+
+// ======================= web part =======================
+
+static CGFloat lightsWidth(); // defined below
+
+static QString scriptSource() {
+	std::string js;
+	NSString *override = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/TelemostTweaks/tweaks.js"];
+	NSData *data = [NSData dataWithContentsOfFile:override];
+	if (data) js.assign((const char *)data.bytes, data.length);
+	else js.assign((const char *)tweaks_js, tweaks_js_len);
+	char prefix[160];
+	snprintf(prefix, sizeof prefix, "window.__TT_LIGHTS_W=%d;\n",
+	         (int)(lightsWidth() + kLightsGap));
+	return QString::fromUtf8(prefix) + QString::fromUtf8(js.data(), (qsizetype)js.size());
+}
+
+static void injectInto(QWebEnginePage *page) {
+	QWebEngineScript s;
+	s.setName(QStringLiteral("telemost-tweaks"));
+	s.setSourceCode(scriptSource());
+	s.setInjectionPoint(QWebEngineScript::DocumentCreation);
+	s.setWorldId(QWebEngineScript::MainWorld);
+	s.setRunsOnSubFrames(false);
+	page->scripts().insert(s);
+	tt_log(@"script injected into page %p", page);
+}
+
+// Mangled constructors we interpose. C2 is what Telemost's own QWebEnginePage subclass calls,
+// C1 covers pages created directly (e.g. by QWebEngineView).
+extern "C" void _ZN14QWebEnginePageC1EP7QObject(void *self, QObject *parent);
+extern "C" void _ZN14QWebEnginePageC2EP7QObject(void *self, QObject *parent);
+extern "C" void _ZN14QWebEnginePageC1EP17QWebEngineProfileP7QObject(void *self, void *profile, QObject *parent);
+extern "C" void _ZN14QWebEnginePageC2EP17QWebEngineProfileP7QObject(void *self, void *profile, QObject *parent);
+
+static void tt_C1(void *self, QObject *p) { _ZN14QWebEnginePageC1EP7QObject(self, p); injectInto((QWebEnginePage *)self); }
+static void tt_C2(void *self, QObject *p) { _ZN14QWebEnginePageC2EP7QObject(self, p); injectInto((QWebEnginePage *)self); }
+static void tt_C1p(void *self, void *pr, QObject *p) { _ZN14QWebEnginePageC1EP17QWebEngineProfileP7QObject(self, pr, p); injectInto((QWebEnginePage *)self); }
+static void tt_C2p(void *self, void *pr, QObject *p) { _ZN14QWebEnginePageC2EP17QWebEngineProfileP7QObject(self, pr, p); injectInto((QWebEnginePage *)self); }
+
+struct interpose_t { const void *replacement; const void *original; };
+__attribute__((used, section("__DATA,__interpose"))) static const interpose_t tt_interposers[] = {
+	{(const void *)tt_C1, (const void *)_ZN14QWebEnginePageC1EP7QObject},
+	{(const void *)tt_C2, (const void *)_ZN14QWebEnginePageC2EP7QObject},
+	{(const void *)tt_C1p, (const void *)_ZN14QWebEnginePageC1EP17QWebEngineProfileP7QObject},
+	{(const void *)tt_C2p, (const void *)_ZN14QWebEnginePageC2EP17QWebEngineProfileP7QObject},
+};
+
+// ======================= window part =======================
+
+static NSArray<NSButton *> *lightButtons(NSWindow *w) {
+	NSMutableArray *a = [NSMutableArray array];
+	for (NSWindowButton b : {NSWindowCloseButton, NSWindowMiniaturizeButton, NSWindowZoomButton}) {
+		NSButton *btn = [w standardWindowButton:b];
+		if (btn) [a addObject:btn];
+	}
+	return a;
+}
+
+static CGFloat lightsWidth() {
+	// close/minimize/zoom are 14pt wide, origins 20pt apart on current macOS
+	return 14 + 2 * 20;
+}
+
+static bool isTarget(NSWindow *w) {
+	if (![NSStringFromClass([w class]) containsString:@"QNSWindow"]) return false;
+	NSWindowStyleMask m = w.styleMask;
+	if (!(m & NSWindowStyleMaskTitled) || !(m & NSWindowStyleMaskResizable)) return false;
+	NSString *t = w.title ?: @"";
+	return [t rangeOfString:@"Telemost" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+	       [t rangeOfString:@"Телемост" options:NSCaseInsensitiveSearch].location != NSNotFound;
+}
+
+static void layoutLights(NSWindow *w) {
+	if (w.styleMask & NSWindowStyleMaskFullScreen) return; // system owns them in full screen
+	NSArray<NSButton *> *btns = lightButtons(w);
+	if (btns.count != 3) return;
+	NSView *container = btns[0].superview.superview; // NSTitlebarContainerView
+	if (!container) return;
+	CGFloat bh = btns[0].frame.size.height;
+	CGFloat top = kLightsCenterY - bh / 2;
+	NSRect r = container.frame;
+	r.size.height = bh + top * 2; // keep the buttons vertically centred in the container
+	r.origin.y = w.frame.size.height - r.size.height;
+	container.frame = r;
+	for (NSUInteger i = 0; i < btns.count; i++) {
+		NSRect br = btns[i].frame;
+		br.origin.x = kLightsX + i * 20;
+		br.origin.y = (btns[i].superview.frame.size.height - bh) / 2;
+		[btns[i] setFrameOrigin:br.origin];
+	}
+}
+
+// Qt 6.8 sizes its top-level view from -contentLayoutRect, which excludes the titlebar
+// even with NSWindowStyleMaskFullSizeContentView. Report the full window for our window.
+static IMP origContentLayoutRect;
+static NSRect tt_contentLayoutRect(NSWindow *self, SEL _cmd) {
+	if ((self.styleMask & NSWindowStyleMaskFullSizeContentView) && isTarget(self))
+		return NSMakeRect(0, 0, self.frame.size.width, self.frame.size.height);
+	return ((NSRect(*)(id, SEL))origContentLayoutRect)(self, _cmd);
+}
+
+static void hookContentLayoutRect() {
+	Method m = class_getInstanceMethod([NSWindow class], @selector(contentLayoutRect));
+	origContentLayoutRect = method_setImplementation(m, (IMP)tt_contentLayoutRect);
+}
+
+// Qt 6.8 also shrinks widget layouts by the view's safe area, which now covers the titlebar.
+static IMP origSafeAreaInsets;
+static NSEdgeInsets tt_safeAreaInsets(NSView *self, SEL _cmd) {
+	NSWindow *w = self.window;
+	if (w && (w.styleMask & NSWindowStyleMaskFullSizeContentView) && isTarget(w)) return NSEdgeInsetsMake(0, 0, 0, 0);
+	return ((NSEdgeInsets(*)(id, SEL))origSafeAreaInsets)(self, _cmd);
+}
+
+static void hookSafeArea(NSView *qnsview) {
+	if (origSafeAreaInsets) return;
+	Class c = [qnsview class];
+	SEL sel = @selector(safeAreaInsets);
+	Method m = class_getInstanceMethod(c, sel);
+	origSafeAreaInsets = method_getImplementation(m);
+	// add an override on the Qt class rather than replacing NSView's implementation
+	if (!class_addMethod(c, sel, (IMP)tt_safeAreaInsets, method_getTypeEncoding(m)))
+		method_setImplementation(m, (IMP)tt_safeAreaInsets);
+	tt_log(@"safeAreaInsets hooked on %@", NSStringFromClass(c));
+}
+
+static void applyChrome(NSWindow *w) {
+	if (!isTarget(w)) return;
+	if (!(w.styleMask & NSWindowStyleMaskFullSizeContentView)) {
+		w.styleMask |= NSWindowStyleMaskFullSizeContentView;
+		hookSafeArea(w.contentView);
+		tt_log(@"chrome applied to %@ '%@' %@", NSStringFromClass([w class]), w.title, NSStringFromRect(w.frame));
+		// Qt only re-reads the content rect on a resize; nudge the frame so the
+		// web view grows into the area under the transparent titlebar.
+		NSRect f = w.frame;
+		f.size.height += 1;
+		[w setFrame:f display:NO];
+		f.size.height -= 1;
+		[w setFrame:f display:YES];
+	}
+	w.titlebarAppearsTransparent = YES;
+	w.titleVisibility = NSWindowTitleHidden;
+	layoutLights(w);
+}
+
+// Window drag: Qt's view swallows mouse events in the (now transparent) titlebar strip,
+// so start a native window drag when the mouse is dragged from the top strip.
+static void installDragMonitor() {
+	static NSEvent *down = nil;
+	[NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown | NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp
+	                                      handler:^NSEvent *(NSEvent *e) {
+		                                      NSWindow *w = e.window;
+		                                      if (!w || !isTarget(w) || (w.styleMask & NSWindowStyleMaskFullScreen)) return e;
+		                                      CGFloat fromTop = w.frame.size.height - e.locationInWindow.y;
+		                                      switch (e.type) {
+		                                      case NSEventTypeLeftMouseDown:
+			                                      down = fromTop <= kDragZoneHeight ? e : nil;
+			                                      if (down && e.clickCount == 2) {
+				                                      down = nil;
+				                                      [w zoom:nil];
+				                                      return nil;
+			                                      }
+			                                      break;
+		                                      case NSEventTypeLeftMouseDragged:
+			                                      if (down && hypot(e.locationInWindow.x - down.locationInWindow.x, e.locationInWindow.y - down.locationInWindow.y) > 3) {
+				                                      NSEvent *d = down;
+				                                      down = nil;
+				                                      [w performWindowDragWithEvent:d];
+				                                      return nil;
+			                                      }
+			                                      break;
+		                                      default:
+			                                      down = nil;
+			                                      break;
+		                                      }
+		                                      return e;
+	                                      }];
+}
+
+__attribute__((constructor)) static void tt_init() {
+	tt_log(@"loaded into %@ pid %d", [[NSBundle mainBundle] bundleIdentifier], getpid());
+	dispatch_async(dispatch_get_main_queue(), ^{
+		NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+		for (NSNotificationName n in @[NSWindowDidBecomeKeyNotification, NSWindowDidBecomeMainNotification, NSWindowDidResizeNotification,
+		                               NSWindowDidEndLiveResizeNotification, NSWindowDidExitFullScreenNotification]) {
+			[nc addObserverForName:n object:nil queue:nil usingBlock:^(NSNotification *note) {
+				   if ([note.object isKindOfClass:[NSWindow class]]) applyChrome(note.object);
+			   }];
+		}
+		installDragMonitor();
+		hookContentLayoutRect();
+	});
+}
