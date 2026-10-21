@@ -83,6 +83,15 @@
 
     /* room for the macOS traffic lights moved into the sidebar header */
     .yamb-sidebar-navigation-header__identity { padding-left: ${window.__TT_LIGHTS_W || 0}px !important; }
+
+    /* chat header: centre it on the sidebar avatar row (y=34), leaving a strip above to drag the window by */
+    .yamb-chat-header { padding-top: 10px !important; height: 57px !important; min-height: 57px !important; box-sizing: border-box !important; }
+
+    /* only the avatar, the title/status text and the buttons react to clicks; empty header space is a drag area */
+    .yamb-chat-header { pointer-events: none !important; }
+    .yamb-chat-header .ui-entity-block-horizontal-layout__left-addon .ui-avatar-orb,
+    .yamb-chat-header .ui-entity-block-horizontal-layout__content .ui-text-container,
+    .yamb-chat-header .ui-entity-block__right-addon .ui-icon-button { pointer-events: auto !important; }
   `;
 	const addStyle = () => {
 		const s = document.createElement("style");

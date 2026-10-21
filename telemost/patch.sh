@@ -12,6 +12,12 @@ INSTALL_NAME="@executable_path/../Frameworks/$DYLIB_NAME"
 STATE="$HOME/Library/Application Support/TelemostTweaks"
 LOG="$HOME/Library/Logs/TelemostTweaks.log"
 
+# one patcher at a time: the LaunchAgent and a manual run can overlap
+if [ -z "${TT_LOCKED:-}" ]; then
+	mkdir -p "$STATE"
+	TT_LOCKED=1 exec /usr/bin/lockf -k "$STATE/.lock" /bin/bash "$0" "$@"
+fi
+
 # under launchd stdout already goes to $LOG
 log() {
 	local line="$(date '+%F %T') patch: $*"
@@ -23,7 +29,11 @@ notify() { osascript -e "display notification \"$1\" with title \"TelemostTweaks
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")"
 BACKUP="$STATE/backup/$VERSION"
 
-is_patched() { otool -l "$BIN" | grep -q "$INSTALL_NAME"; }
+# grep -q would close the pipe early; with pipefail otool's SIGPIPE then reads as "not patched"
+is_patched() { otool -l "$BIN" | grep -F "$INSTALL_NAME" >/dev/null; }
+# the bundle copy differs from build/ after a rebuild of the tweaks
+sha() { [ -f "$1" ] && shasum -a 256 <"$1" | cut -d' ' -f1; }
+dylib_current() { [ "$(sha "$HERE/build/$DYLIB_NAME")" = "$(sha "$APP/Contents/Frameworks/$DYLIB_NAME")" ]; }
 
 if [ "${1:-}" = "--restore" ]; then
 	[ -d "$BACKUP" ] || { log "no backup for $VERSION"; exit 1; }
@@ -34,7 +44,7 @@ if [ "${1:-}" = "--restore" ]; then
 	exit 0
 fi
 
-if is_patched && [ "${1:-}" != "--force" ]; then
+if is_patched && dylib_current && [ "${1:-}" != "--force" ]; then
 	exit 0
 fi
 
@@ -55,8 +65,7 @@ fi
 
 DYLIB="$HERE/build/$DYLIB_NAME"
 [ -f "$DYLIB" ] || "$HERE/build.sh"
-cp -f "$DYLIB" "$APP/Contents/Frameworks/$DYLIB_NAME"
-codesign --force --sign - "$APP/Contents/Frameworks/$DYLIB_NAME"
+cp -f "$DYLIB" "$APP/Contents/Frameworks/$DYLIB_NAME" # already ad-hoc signed by build.sh
 
 # Patch a copy and rename it into place: a running Telemost keeps its old inode.
 cp -p "$BIN" "$BIN.tt-tmp"

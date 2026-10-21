@@ -13,4 +13,5 @@ clang++ -std=c++17 -fobjc-arc -dynamiclib -O2 -DQT_NO_VERSION_TAGGING \
 	-framework Cocoa -undefined dynamic_lookup \
 	-install_name @executable_path/../Frameworks/TelemostTweaks.dylib \
 	-o build/TelemostTweaks.dylib tweaks.mm
+codesign --force --sign - build/TelemostTweaks.dylib
 echo "built build/TelemostTweaks.dylib"
