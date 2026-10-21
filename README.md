@@ -43,7 +43,7 @@ LaunchAgent следит (`WatchPaths`) за `Contents/MacOS/Yandex.Telemost` и
 - ждёт, пока апдейтер допишет бандл;
 - бэкапит оригинальный бинарник и `_CodeSignature` в `~/Library/Application Support/TelemostTweaks/backup/<CFBundleVersion>/`;
 - вставляет dylib и переподписывает;
-- если Телемост в этот момент запущен, показывает уведомление «перезапусти».
+- если Телемост в этот момент запущен, показывает уведомление о необходимости перезапуска.
 
 Проверено симуляцией: `patch.sh --restore` вернул оригинальный бинарник, через ~7 секунд агент перепатчил его сам.
 
@@ -54,8 +54,8 @@ LaunchAgent следит (`WatchPaths`) за `Contents/MacOS/Yandex.Telemost` и
 ### Отладка
 
 - Лог: `~/Library/Logs/TelemostTweaks.log`.
-- Править CSS/JS без пересборки: положи свой вариант в `~/Library/Application Support/TelemostTweaks/tweaks.js`, он имеет приоритет над вшитым.
-- DevTools: запусти `QTWEBENGINE_REMOTE_DEBUGGING=127.0.0.1:9333 /Applications/Yandex.Telemost.app/Contents/MacOS/Yandex.Telemost` и открой `http://127.0.0.1:9333`.
+- Править CSS/JS без пересборки: положить свой вариант в `~/Library/Application Support/TelemostTweaks/tweaks.js`, он имеет приоритет над вшитым.
+- DevTools: запустить `QTWEBENGINE_REMOTE_DEBUGGING=127.0.0.1:9333 /Applications/Yandex.Telemost.app/Contents/MacOS/Yandex.Telemost` и открыть `http://127.0.0.1:9333`.
 
 ### Откат
 
@@ -68,7 +68,7 @@ cd telemost && ./install.sh --uninstall
 ### Побочные эффекты ad-hoc подписи
 
 - macOS может заново спросить доступ к камере, микрофону и записи экрана: TCC привязан к подписи.
-- Keychain может спросить доступ к сохранённым ключам. Ответь «Всегда разрешать».
+- Keychain может спросить доступ к сохранённым ключам. Ответить «Всегда разрешать».
 
 ### Известное
 

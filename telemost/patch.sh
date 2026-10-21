@@ -79,5 +79,5 @@ xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
 log "done: $VERSION patched and ad-hoc signed"
 
 if pgrep -xq "Yandex.Telemost"; then
-	notify "Телемост $VERSION пропатчен. Перезапусти его, чтобы применилось."
+	notify "Телемост $VERSION пропатчен. Изменения применятся после перезапуска."
 fi
