@@ -7,6 +7,10 @@
 #import <objc/runtime.h>
 #import <UserNotifications/UserNotifications.h>
 #include <QtCore/QString>
+#include <QtWidgets/QApplication>
+#include <QtWidgets/QWidget>
+#include <QtGui/QGuiApplication>
+#include <QtGui/QWindow>
 #include <QtWebEngineCore/QWebEnginePage>
 #include <QtWebEngineCore/QWebEngineProfile>
 #include <QtWebEngineCore/QWebEngineScript>
@@ -238,6 +242,67 @@ static void installDragMonitor() {
 	                                      }];
 }
 
+// ======================= show window on activation =======================
+// Stock Telemost reopens its closed (hidden) main window on a Dock click, but not when
+// the app is activated with Cmd+Tab: that only sends didBecomeActive, never reopen.
+// On activation, if the main window is hidden, show it through Qt (not AppKit) so
+// Qt's own visibility state stays consistent.
+
+// The main window is an `Orbita::Frame` with an empty widget title; "Yandex Telemost"
+// is set only on its native window. Match the title on either, else take the largest
+// plain top-level window that is not a menu bar.
+static bool isTelemostTitle(const QString &t) {
+	return t.contains(QStringLiteral("Telemost"), Qt::CaseInsensitive) || t.contains(QStringLiteral("Телемост"), Qt::CaseInsensitive);
+}
+
+static QWidget *mainWidget() {
+	QWidget *byTitle = nullptr, *largest = nullptr;
+	for (QWidget *w : QApplication::topLevelWidgets()) {
+		if (!w->isWindow() || w->windowType() != Qt::Window || w->inherits("QMenuBar")) continue;
+		if (!largest || w->width() * w->height() > largest->width() * largest->height()) largest = w;
+		if (isTelemostTitle(w->windowTitle()) || (w->windowHandle() && isTelemostTitle(w->windowHandle()->title()))) byTitle = w;
+	}
+	return byTitle ? byTitle : largest;
+}
+
+static void dumpWindows(const char *tag) {
+	for (QWidget *x : QApplication::topLevelWidgets())
+		tt_log(@"  %s widget %s '%s' window=%d visible=%d type=0x%x %dx%d", tag, x->metaObject()->className(), x->windowTitle().toUtf8().constData(),
+		       x->isWindow(), x->isVisible(), (unsigned)x->windowType(), x->width(), x->height());
+	for (QWindow *x : QGuiApplication::topLevelWindows())
+		tt_log(@"  %s qwindow %s '%s' visible=%d %dx%d", tag, x->metaObject()->className(), x->title().toUtf8().constData(), x->isVisible(), x->width(), x->height());
+	for (NSWindow *x in NSApp.windows)
+		tt_log(@"  %s nswindow %@ '%@' visible=%d", tag, NSStringFromClass([x class]), x.title, x.visible);
+}
+
+static void showMainWindowIfHidden() {
+	// any other visible titled window (a call, settings) means the user has something on screen
+	for (NSWindow *nw in NSApp.windows)
+		if (nw.visible && (nw.styleMask & NSWindowStyleMaskTitled)) return;
+	QWidget *w = mainWidget();
+	if (!w) {
+		tt_log(@"activate: no hidden main window found");
+		dumpWindows("activate");
+		return;
+	}
+	w->showNormal();
+	w->raise();
+	w->activateWindow();
+	tt_log(@"activate: showed '%s'", w->windowTitle().toUtf8().constData());
+}
+
+static void installActivationHandler() {
+	[[NSNotificationCenter defaultCenter] addObserverForName:NSApplicationDidBecomeActiveNotification
+	                                                  object:nil
+	                                                   queue:nil
+	                                              usingBlock:^(NSNotification *) {
+		                                              // let a Dock-click reopen, which also activates, go first
+		                                              dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+			                                              showMainWindowIfHidden();
+		                                              });
+	                                              }];
+}
+
 // ======================= notification diagnostics =======================
 // Logs what macOS answers to every notification request, so "the web side sent it,
 // nothing appeared" can be told apart from a refusal by the system.
@@ -263,7 +328,10 @@ static void hookNotifications() {
 
 __attribute__((constructor)) static void tt_init() {
 	tt_log(@"loaded into %@ pid %d", [[NSBundle mainBundle] bundleIdentifier], getpid());
-	dispatch_async(dispatch_get_main_queue(), ^{ hookNotifications(); });
+	dispatch_async(dispatch_get_main_queue(), ^{
+		hookNotifications();
+		installActivationHandler();
+	});
 	if (getenv("TT_NO_WINDOW")) return;
 	dispatch_async(dispatch_get_main_queue(), ^{
 		NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];

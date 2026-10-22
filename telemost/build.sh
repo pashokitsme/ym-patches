@@ -8,7 +8,7 @@ mkdir -p build
 xxd -i tweaks.js > build/tweaks_js.h
 clang++ -std=c++17 -fobjc-arc -dynamiclib -O2 -DQT_NO_VERSION_TAGGING \
 	-arch arm64 -arch x86_64 -mmacosx-version-min=12.0 \
-	-F "$QT" -I "$QT/QtCore.framework/Headers" -I "$QT/QtWebEngineCore.framework/Headers" \
+	-F "$QT" -I "$QT/QtCore.framework/Headers" -I "$QT/QtWebEngineCore.framework/Headers" -I "$QT/QtWidgets.framework/Headers" -I "$QT/QtGui.framework/Headers" \
 	-iframework "$QT" -Ibuild \
 	-framework Cocoa -framework UserNotifications -undefined dynamic_lookup \
 	-install_name @executable_path/../Frameworks/TelemostTweaks.dylib \
