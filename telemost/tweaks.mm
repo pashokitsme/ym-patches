@@ -7,6 +7,7 @@
 #import <objc/runtime.h>
 #include <QtCore/QString>
 #include <QtWebEngineCore/QWebEnginePage>
+#include <QtWebEngineCore/QWebEngineProfile>
 #include <QtWebEngineCore/QWebEngineScript>
 #include <QtWebEngineCore/QWebEngineScriptCollection>
 #include <cstdio>
@@ -37,7 +38,7 @@ static CGFloat lightsWidth(); // defined below
 
 static QString scriptSource() {
 	std::string js;
-	NSString *override = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/TelemostTweaks/tweaks.js"];
+	NSString *override = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/TelemostTweaks/tweaks.override.js"];
 	NSData *data = [NSData dataWithContentsOfFile:override];
 	if (data) js.assign((const char *)data.bytes, data.length);
 	else js.assign((const char *)tweaks_js, tweaks_js_len);
@@ -48,27 +49,53 @@ static QString scriptSource() {
 }
 
 static void injectInto(QWebEnginePage *page) {
+	if (getenv("TT_NO_WEB")) return;
 	QWebEngineScript s;
 	s.setName(QStringLiteral("telemost-tweaks"));
 	s.setSourceCode(scriptSource());
 	s.setInjectionPoint(QWebEngineScript::DocumentCreation);
 	s.setWorldId(QWebEngineScript::MainWorld);
 	s.setRunsOnSubFrames(false);
-	page->scripts().insert(s);
-	tt_log(@"script injected into page %p", page);
+	// once per profile: profile scripts apply to every page created in it
+	QWebEngineProfile *profile = page->profile();
+	static NSMutableSet<NSValue *> *done = [NSMutableSet set];
+	NSValue *key = [NSValue valueWithPointer:profile];
+	if ([done containsObject:key]) return;
+	[done addObject:key];
+	profile->scripts()->insert(s);
+	tt_log(@"script injected into profile %p (first page %p)", profile, page);
 }
 
 // Mangled constructors we interpose. C2 is what Telemost's own QWebEnginePage subclass calls,
 // C1 covers pages created directly (e.g. by QWebEngineView).
-extern "C" void _ZN14QWebEnginePageC1EP7QObject(void *self, QObject *parent);
-extern "C" void _ZN14QWebEnginePageC2EP7QObject(void *self, QObject *parent);
-extern "C" void _ZN14QWebEnginePageC1EP17QWebEngineProfileP7QObject(void *self, void *profile, QObject *parent);
-extern "C" void _ZN14QWebEnginePageC2EP17QWebEngineProfileP7QObject(void *self, void *profile, QObject *parent);
+// On Apple arm64 C++ constructors return `this` and callers may use it, so the wrappers must
+// pass it through: returning garbage broke the page Telemost creates for window.open, and
+// with it every target=_blank link.
+extern "C" void *_ZN14QWebEnginePageC1EP7QObject(void *self, QObject *parent);
+extern "C" void *_ZN14QWebEnginePageC2EP7QObject(void *self, QObject *parent);
+extern "C" void *_ZN14QWebEnginePageC1EP17QWebEngineProfileP7QObject(void *self, void *profile, QObject *parent);
+extern "C" void *_ZN14QWebEnginePageC2EP17QWebEngineProfileP7QObject(void *self, void *profile, QObject *parent);
 
-static void tt_C1(void *self, QObject *p) { _ZN14QWebEnginePageC1EP7QObject(self, p); injectInto((QWebEnginePage *)self); }
-static void tt_C2(void *self, QObject *p) { _ZN14QWebEnginePageC2EP7QObject(self, p); injectInto((QWebEnginePage *)self); }
-static void tt_C1p(void *self, void *pr, QObject *p) { _ZN14QWebEnginePageC1EP17QWebEngineProfileP7QObject(self, pr, p); injectInto((QWebEnginePage *)self); }
-static void tt_C2p(void *self, void *pr, QObject *p) { _ZN14QWebEnginePageC2EP17QWebEngineProfileP7QObject(self, pr, p); injectInto((QWebEnginePage *)self); }
+static void *tt_C1(void *self, QObject *p) {
+	void *r = _ZN14QWebEnginePageC1EP7QObject(self, p);
+	injectInto((QWebEnginePage *)self);
+	return r;
+}
+static void *tt_C2(void *self, QObject *p) {
+	void *r = _ZN14QWebEnginePageC2EP7QObject(self, p);
+	injectInto((QWebEnginePage *)self);
+	return r;
+}
+static void *tt_C1p(void *self, void *pr, QObject *p) {
+	void *r = _ZN14QWebEnginePageC1EP17QWebEngineProfileP7QObject(self, pr, p);
+	injectInto((QWebEnginePage *)self);
+	return r;
+}
+static void *tt_C2p(void *self, void *pr, QObject *p) {
+	void *r = _ZN14QWebEnginePageC2EP17QWebEngineProfileP7QObject(self, pr, p);
+	injectInto((QWebEnginePage *)self);
+	return r;
+}
 
 struct interpose_t { const void *replacement; const void *original; };
 __attribute__((used, section("__DATA,__interpose"))) static const interpose_t tt_interposers[] = {
@@ -212,6 +239,7 @@ static void installDragMonitor() {
 
 __attribute__((constructor)) static void tt_init() {
 	tt_log(@"loaded into %@ pid %d", [[NSBundle mainBundle] bundleIdentifier], getpid());
+	if (getenv("TT_NO_WINDOW")) return;
 	dispatch_async(dispatch_get_main_queue(), ^{
 		NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
 		for (NSNotificationName n in @[NSWindowDidBecomeKeyNotification, NSWindowDidBecomeMainNotification, NSWindowDidResizeNotification,

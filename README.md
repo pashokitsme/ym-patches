@@ -55,7 +55,8 @@ LaunchAgent следит (`WatchPaths`) за `Contents/MacOS/Yandex.Telemost` и
 ### Отладка
 
 - Лог: `~/Library/Logs/TelemostTweaks.log`.
-- Править CSS/JS без пересборки: положить свой вариант в `~/Library/Application Support/TelemostTweaks/tweaks.js`, он имеет приоритет над вшитым.
+- Править CSS/JS без пересборки: положить свой вариант в `~/Library/Application Support/TelemostTweaks/tweaks.override.js`, он имеет приоритет над вшитым.
+- Бисекция: переменные окружения `TT_NO_WEB=1` (без инъекции JS/CSS) и `TT_NO_WINDOW=1` (без правок окна) при запуске бинарника из терминала.
 - DevTools: запустить `QTWEBENGINE_REMOTE_DEBUGGING=127.0.0.1:9333 /Applications/Yandex.Telemost.app/Contents/MacOS/Yandex.Telemost` и открыть `http://127.0.0.1:9333`.
 
 ### Откат
