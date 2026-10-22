@@ -5,6 +5,7 @@
 
 #import <Cocoa/Cocoa.h>
 #import <objc/runtime.h>
+#import <UserNotifications/UserNotifications.h>
 #include <QtCore/QString>
 #include <QtWebEngineCore/QWebEnginePage>
 #include <QtWebEngineCore/QWebEngineProfile>
@@ -237,8 +238,32 @@ static void installDragMonitor() {
 	                                      }];
 }
 
+// ======================= notification diagnostics =======================
+// Logs what macOS answers to every notification request, so "the web side sent it,
+// nothing appeared" can be told apart from a refusal by the system.
+
+static IMP origAddRequest;
+static void tt_addRequest(id self, SEL _cmd, UNNotificationRequest *req, void (^done)(NSError *)) {
+	NSString *ident = req.identifier;
+	void (^wrapped)(NSError *) = ^(NSError *err) {
+		tt_log(@"notification %@ -> %@", ident, err ? err.description : @"accepted by macOS");
+		if (done) done(err);
+	};
+	((void (*)(id, SEL, UNNotificationRequest *, void (^)(NSError *)))origAddRequest)(self, _cmd, req, wrapped);
+}
+
+static void hookNotifications() {
+	Method m = class_getInstanceMethod([UNUserNotificationCenter class], @selector(addNotificationRequest:withCompletionHandler:));
+	if (!m) return;
+	origAddRequest = method_setImplementation(m, (IMP)tt_addRequest);
+	[[UNUserNotificationCenter currentNotificationCenter] getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *st) {
+		tt_log(@"notification settings: authorization=%ld alert=%ld sound=%ld", (long)st.authorizationStatus, (long)st.alertSetting, (long)st.soundSetting);
+	}];
+}
+
 __attribute__((constructor)) static void tt_init() {
 	tt_log(@"loaded into %@ pid %d", [[NSBundle mainBundle] bundleIdentifier], getpid());
+	dispatch_async(dispatch_get_main_queue(), ^{ hookNotifications(); });
 	if (getenv("TT_NO_WINDOW")) return;
 	dispatch_async(dispatch_get_main_queue(), ^{
 		NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];

@@ -10,7 +10,7 @@ clang++ -std=c++17 -fobjc-arc -dynamiclib -O2 -DQT_NO_VERSION_TAGGING \
 	-arch arm64 -arch x86_64 -mmacosx-version-min=12.0 \
 	-F "$QT" -I "$QT/QtCore.framework/Headers" -I "$QT/QtWebEngineCore.framework/Headers" \
 	-iframework "$QT" -Ibuild \
-	-framework Cocoa -undefined dynamic_lookup \
+	-framework Cocoa -framework UserNotifications -undefined dynamic_lookup \
 	-install_name @executable_path/../Frameworks/TelemostTweaks.dylib \
 	-o build/TelemostTweaks.dylib tweaks.mm
 codesign --force --sign - build/TelemostTweaks.dylib

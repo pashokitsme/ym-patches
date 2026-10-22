@@ -58,6 +58,7 @@ LaunchAgent следит (`WatchPaths`) за `Contents/MacOS/Yandex.Telemost` и
 
 - Лог: `~/Library/Logs/TelemostTweaks.log`.
 - Править CSS/JS без пересборки: положить свой вариант в `~/Library/Application Support/TelemostTweaks/tweaks.override.js`, он имеет приоритет над вшитым.
+- Уведомления: в лог пишутся статус авторизации уведомлений macOS при старте и ответ macOS на каждое уведомление (`notification N -> accepted by macOS` или текст ошибки). Если там `accepted`, а баннера нет, причина в Focus/«Не беспокоить» или в стиле уведомлений Телемоста в системных настройках.
 - Бисекция: переменные окружения `TT_NO_WEB=1` (без инъекции JS/CSS) и `TT_NO_WINDOW=1` (без правок окна) при запуске бинарника из терминала.
 - DevTools: запустить `QTWEBENGINE_REMOTE_DEBUGGING=127.0.0.1:9333 /Applications/Yandex.Telemost.app/Contents/MacOS/Yandex.Telemost` и открыть `http://127.0.0.1:9333`.
 
