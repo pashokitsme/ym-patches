@@ -65,7 +65,11 @@ fi
 
 DYLIB="$HERE/build/$DYLIB_NAME"
 [ -f "$DYLIB" ] || "$HERE/build.sh"
-cp -f "$DYLIB" "$APP/Contents/Frameworks/$DYLIB_NAME" # already ad-hoc signed by build.sh
+# Never overwrite a signed Mach-O in place: the kernel caches its code signature per
+# vnode, and the next launch is killed with "Code Signature Invalid" while dyld maps it.
+# Copy to a new file and rename it over the old one so it gets a fresh inode.
+cp -f "$DYLIB" "$APP/Contents/Frameworks/$DYLIB_NAME.tt-tmp" # already ad-hoc signed by build.sh
+mv -f "$APP/Contents/Frameworks/$DYLIB_NAME.tt-tmp" "$APP/Contents/Frameworks/$DYLIB_NAME"
 
 # Patch a copy and rename it into place: a running Telemost keeps its old inode.
 cp -p "$BIN" "$BIN.tt-tmp"

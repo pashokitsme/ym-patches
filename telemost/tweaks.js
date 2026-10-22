@@ -29,17 +29,20 @@
 	//    switch has no default branch, so nothing is shown and nothing throws.
 	//    Shown: incoming calls, notifications addressed to us, messages that mention
 	//    us, and anything from a chat in a folder named in IMPORTANT_FOLDERS.
+	//    With no such folder (or folders not loaded yet) everything is shown, as stock.
 	const IMPORTANT_FOLDERS = ["important", "важное"];
 	const SUPPRESSED = { type: "telemost-tweaks/notification-suppressed" };
 	const N = (T.notifications = { shown: 0, suppressed: 0, recent: [] });
 
+	// null when no folder is named in IMPORTANT_FOLDERS
 	const importantChatIds = (state) => {
-		const ids = new Set();
+		let ids = null;
 		const byOrgData = state.buckets?.folders?.data || {};
 		const meta = state.metastore?.folders?.byOrg;
 		for (const org of Object.keys(byOrgData)) {
 			for (const f of byOrgData[org]?.custom_folders || []) {
 				if (!IMPORTANT_FOLDERS.includes(String(f.name).trim().toLowerCase())) continue;
+				ids = ids || new Set();
 				const excluded = new Set(f.excluded_chat_ids || []);
 				for (const id of f.included_chat_ids || []) if (!excluded.has(id)) ids.add(id);
 				// membership the client computed itself, covering included types too
@@ -57,6 +60,7 @@
 		const chatId = ev?.data?.chatId;
 		const parent = state.chats?.[chatId]?.threadData?.chatId;
 		const important = importantChatIds(state);
+		if (!important) return "no important folder";
 		if (important.has(chatId) || (parent && important.has(parent))) return "important folder";
 		const mentions = ev?.data?.message?.mentions;
 		if (src === "message" && Array.isArray(mentions) && mentions.some((m) => m?.guid === state.authId)) return "mention";

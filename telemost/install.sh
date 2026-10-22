@@ -20,7 +20,10 @@ fi
 "$SRC/build.sh"
 mkdir -p "$DEST/build"
 cp -f "$SRC"/{tweaks.js,tweaks.mm,build.sh,patch.sh,insert_dylib.py,install.sh} "$DEST/"
-cp -f "$SRC/build/TelemostTweaks.dylib" "$SRC/build/tweaks_js.h" "$DEST/build/"
+cp -f "$SRC/build/tweaks_js.h" "$DEST/build/"
+# new inode for the Mach-O, see patch.sh
+cp -f "$SRC/build/TelemostTweaks.dylib" "$DEST/build/TelemostTweaks.dylib.tt-tmp"
+mv -f "$DEST/build/TelemostTweaks.dylib.tt-tmp" "$DEST/build/TelemostTweaks.dylib"
 
 cat >"$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
