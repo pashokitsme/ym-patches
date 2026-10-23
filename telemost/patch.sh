@@ -11,6 +11,12 @@ DYLIB_NAME=TelemostTweaks.dylib
 INSTALL_NAME="@executable_path/../Frameworks/$DYLIB_NAME"
 STATE="$HOME/Library/Application Support/TelemostTweaks"
 LOG="$HOME/Library/Logs/TelemostTweaks.log"
+# Local self-signed code signing identity (see README). With it the designated
+# requirement is "identifier + this certificate", stable across re-signs, so macOS
+# privacy grants (screen recording, camera, mic) survive re-patching and updates.
+# Without it we fall back to ad-hoc, whose requirement is the binary's cdhash and
+# changes on every re-sign, silently invalidating those grants.
+SIGN_ID="${TT_SIGN_IDENTITY:-TelemostTweaks Local Signing}"
 
 # one patcher at a time: the LaunchAgent and a manual run can overlap
 if [ -z "${TT_LOCKED:-}" ]; then
@@ -34,6 +40,8 @@ is_patched() { otool -l "$BIN" | grep -F "$INSTALL_NAME" >/dev/null; }
 # the bundle copy differs from build/ after a rebuild of the tweaks
 sha() { [ -f "$1" ] && shasum -a 256 <"$1" | cut -d' ' -f1; }
 dylib_current() { [ "$(sha "$HERE/build/$DYLIB_NAME")" = "$(sha "$APP/Contents/Frameworks/$DYLIB_NAME")" ]; }
+have_identity() { security find-certificate -c "$SIGN_ID" >/dev/null 2>&1; }
+signed_as_wanted() { ! have_identity || codesign -dvv "$APP" 2>&1 | grep -F "Authority=$SIGN_ID" >/dev/null; }
 
 if [ "${1:-}" = "--restore" ]; then
 	[ -d "$BACKUP" ] || { log "no backup for $VERSION"; exit 1; }
@@ -44,7 +52,7 @@ if [ "${1:-}" = "--restore" ]; then
 	exit 0
 fi
 
-if is_patched && dylib_current && [ "${1:-}" != "--force" ]; then
+if is_patched && dylib_current && signed_as_wanted && [ "${1:-}" != "--force" ]; then
 	exit 0
 fi
 
@@ -77,19 +85,25 @@ python3 -I "$HERE/insert_dylib.py" "$BIN.tt-tmp" "$INSTALL_NAME" | while read -r
 mv -f "$BIN.tt-tmp" "$BIN"
 
 # Modified binary => Yandex signature is invalid and arm64 refuses to run it unsigned.
-# Ad-hoc re-sign WITHOUT hardened runtime: with it, library validation would reject
-# the Yandex-signed Qt frameworks next to an ad-hoc main executable.
+# Re-sign WITHOUT hardened runtime: with it, library validation would reject the
+# Yandex-signed Qt frameworks next to a main executable signed by anyone else.
+SIGN=-
+have_identity && SIGN="$SIGN_ID"
 ENT="$(mktemp -t tt-ent).plist"
 codesign -d --entitlements :- "$BACKUP/Yandex.Telemost" >"$ENT" 2>/dev/null || true
 if [ -s "$ENT" ]; then
-	codesign --force --sign - --entitlements "$ENT" "$APP"
+	codesign --force --sign "$SIGN" --entitlements "$ENT" "$APP"
 else
-	codesign --force --sign - "$APP"
+	codesign --force --sign "$SIGN" "$APP"
 fi
 rm -f "$ENT"
 codesign --verify --strict "$APP"
 xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
-log "done: $VERSION patched and ad-hoc signed"
+if [ "$SIGN" = - ]; then
+	log "done: $VERSION patched and ad-hoc signed (no '$SIGN_ID' identity: privacy grants reset on every re-sign)"
+else
+	log "done: $VERSION patched and signed by '$SIGN_ID'"
+fi
 
 if pgrep -xq "Yandex.Telemost"; then
 	notify "Телемост $VERSION пропатчен. Изменения применятся после перезапуска."

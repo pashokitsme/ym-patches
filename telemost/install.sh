@@ -18,8 +18,9 @@ if [ "${1:-}" = "--uninstall" ]; then
 fi
 
 "$SRC/build.sh"
+"$SRC/make-identity.sh" # stable signature, so privacy grants survive re-patching
 mkdir -p "$DEST/build"
-cp -f "$SRC"/{tweaks.js,tweaks.mm,build.sh,patch.sh,insert_dylib.py,install.sh} "$DEST/"
+cp -f "$SRC"/{tweaks.js,tweaks.mm,build.sh,patch.sh,insert_dylib.py,install.sh,make-identity.sh} "$DEST/"
 cp -f "$SRC/build/tweaks_js.h" "$DEST/build/"
 # new inode for the Mach-O, see patch.sh
 cp -f "$SRC/build/TelemostTweaks.dylib" "$DEST/build/TelemostTweaks.dylib.tt-tmp"
