@@ -189,11 +189,17 @@ static void hookSafeArea(NSView *qnsview) {
 	tt_log(@"safeAreaInsets hooked on %@", NSStringFromClass(c));
 }
 
+static char chromeAppliedKey;
+
 static void applyChrome(NSWindow *w) {
 	if (!isTarget(w)) return;
-	if (!(w.styleMask & NSWindowStyleMaskFullSizeContentView)) {
+	bool firstApplication = !objc_getAssociatedObject(w, &chromeAppliedKey);
+	bool needsLayout = firstApplication || !(w.styleMask & NSWindowStyleMaskFullSizeContentView);
+	// Mark before changing the style: AppKit can synchronously send resize notifications.
+	objc_setAssociatedObject(w, &chromeAppliedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+	hookSafeArea(w.contentView);
+	if (needsLayout) {
 		w.styleMask |= NSWindowStyleMaskFullSizeContentView;
-		hookSafeArea(w.contentView);
 		tt_log(@"chrome applied to %@ '%@' %@", NSStringFromClass([w class]), w.title, NSStringFromRect(w.frame));
 		// Qt only re-reads the content rect on a resize; nudge the frame so the
 		// web view grows into the area under the transparent titlebar.
@@ -206,6 +212,20 @@ static void applyChrome(NSWindow *w) {
 	w.titlebarAppearsTransparent = YES;
 	w.titleVisibility = NSWindowTitleHidden;
 	layoutLights(w);
+}
+
+// Qt can assign the title after the initial key/main/resize notifications.
+// Retry after that assignment, when Qt has finished updating the native window.
+static IMP origSetTitle;
+static void tt_setTitle(NSWindow *self, SEL _cmd, NSString *title) {
+	((void (*)(id, SEL, NSString *))origSetTitle)(self, _cmd, title);
+	if (!isTarget(self)) return;
+	dispatch_async(dispatch_get_main_queue(), ^{ applyChrome(self); });
+}
+
+static void hookWindowTitle() {
+	Method m = class_getInstanceMethod([NSWindow class], @selector(setTitle:));
+	origSetTitle = method_setImplementation(m, (IMP)tt_setTitle);
 }
 
 // Window drag: Qt's view swallows mouse events in the (now transparent) titlebar strip,
@@ -343,5 +363,8 @@ __attribute__((constructor)) static void tt_init() {
 		}
 		installDragMonitor();
 		hookContentLayoutRect();
+		hookWindowTitle();
+		// Initial window events may have run before this main-queue block.
+		for (NSWindow *w in NSApp.windows) applyChrome(w);
 	});
 }
